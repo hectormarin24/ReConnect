@@ -1,5 +1,6 @@
 
 import sys
+import httpx
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
@@ -215,9 +216,34 @@ class CreateAccountWindow(QWidget):
             self.status.setText("Please accept the terms to continue.")
             return
 
-        self.status.setText(
-            "Form validated! Account creation is not connected yet."
-        )
+        try:
+            response = httpx.post(
+            "http://127.0.0.1:8000/auth/register",
+                json={
+                    "full_name": name,
+                    "email": email,
+                    "password": password,
+                },
+                timeout=5,
+            )
+
+            if response.status_code == 200:
+                self.status.setText(
+                    "Account created successfully."
+                )
+            elif response.status_code == 409:
+                self.status.setText(
+                    "That email is already registered."
+                )
+            else:
+                self.status.setText(
+                    "Account creation failed."
+            )
+
+        except httpx.RequestError:
+            self.status.setText(
+                "Unable to connect to the backend."
+            )
 
     def sign_in(self):
         self.status.setText("Sign-in navigation is not connected yet.")
