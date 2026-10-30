@@ -1,6 +1,11 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException
 
-from .auth import authenticate_user, create_user
+from .auth import (
+    authenticate_user,
+    create_user,
+    create_session,
+    get_current_user,
+)
 from .schemas import LoginRequest, RegisterRequest
 
 app = FastAPI(title="ReConnect Backend")
@@ -50,7 +55,17 @@ def login(request: LoginRequest):
             detail="Invalid email or password.",
         )
 
+    token = create_session(user["id"])
+
     return {
         "success": True,
         "user": user,
+        "access_token": token,
+        "token_type": "bearer",
+    }
+
+@app.get("/auth/me")
+def get_my_account(current_user: dict = Depends(get_current_user)):
+    return {
+        "user": current_user,
     }
