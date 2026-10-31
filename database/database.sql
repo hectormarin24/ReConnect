@@ -24,3 +24,29 @@ CREATE TABLE IF NOT EXISTS user_sessions (
         REFERENCES admin_users(id)
         ON DELETE CASCADE
 );
+
+
+CREATE TABLE IF NOT EXISTS twilio_accounts (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    user_id INT NOT NULL,
+    label VARCHAR(100) NOT NULL,
+
+    account_sid CHAR(34)
+        CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+
+    auth_token_encrypted TEXT NOT NULL,
+
+    sms_number VARCHAR(16) DEFAULT NULL,
+    whatsapp_number VARCHAR(16) DEFAULT NULL,
+
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    UNIQUE KEY uq_twilio_accounts_account_sid (account_sid),
+
+    INDEX idx_twilio_accounts_user_id (user_id),
+
+    CONSTRAINT fk_twilio_accounts_user
+        FOREIGN KEY (user_id)
+        REFERENCES admin_users(id)
+        ON DELETE CASCADE
+);
