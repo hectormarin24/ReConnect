@@ -1,4 +1,5 @@
 import sys
+import httpx
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
@@ -169,10 +170,38 @@ class LoginWindow(QWidget):
         password = self.password_input.text()
 
         if not email or not password:
-            self.status.setText("Please enter your email and password.")
+            self.status.setText(
+                "Please enter your email and password."
+            )
             return
 
-        self.status.setText("Authentication is not connected yet.")
+        try:
+            response = httpx.post(
+                "http://127.0.0.1:8000/auth/login",
+                json={
+                    "email": email,
+                    "password": password,
+                },
+                timeout=5,
+            )
+
+            if response.status_code == 200:
+                self.status.setText(
+                    "Login successful."
+                )
+            elif response.status_code == 401:
+                self.status.setText(
+                    "Invalid email or password."
+                )
+            else:
+                self.status.setText(
+                    "Login failed."
+                )
+
+        except httpx.RequestError:
+            self.status.setText(
+                "Unable to connect to the backend."
+            )
 
     def forgot_password(self):
         self.status.setText("Password reset is not connected yet.")
