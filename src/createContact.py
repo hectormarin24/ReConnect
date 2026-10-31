@@ -1,6 +1,6 @@
 import sys
 import httpx
-
+from contact_validation import validate_contact
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QApplication,
@@ -152,6 +152,11 @@ class createContactWindow(QWidget):
         position = self.position_input.text().strip()
         tags = self.tags_input.text().strip()
         notes = self.notes_input.toPlainText().strip()
+        is_valid, error_message = validate_contact(full_name, email, phone)
+
+        if not is_valid:
+            self.status.setText(error_message)
+            return
 
 
         try:
