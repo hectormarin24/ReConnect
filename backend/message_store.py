@@ -203,3 +203,40 @@ def list_messages_for_user(
 
         if connection is not None and connection.is_connected():
             connection.close()
+
+def count_unread_messages(user_id: int) -> int:
+    connection = None
+    cursor = None
+
+    try:
+        connection = get_connection()
+        cursor = connection.cursor(dictionary=True)
+
+        cursor.execute(
+            """
+            SELECT COUNT(*) AS unread_count
+            FROM twilio_messages AS m
+            JOIN twilio_accounts AS a
+                ON a.id = m.twilio_account_id
+            WHERE a.user_id = %s
+              AND m.direction = 'inbound'
+              AND m.is_read = FALSE
+            """,
+            (user_id,),
+        )
+
+        result = cursor.fetchone()
+        return result["unread_count"]
+
+    except mysql.connector.Error:
+        raise HTTPException(
+            status_code=500,
+            detail="Unable to load the unread-message count.",
+        ) from None
+
+    finally:
+        if cursor is not None:
+            cursor.close()
+
+        if connection is not None and connection.is_connected():
+            connection.close()

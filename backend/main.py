@@ -8,6 +8,7 @@ import os
 from .message_store import (
     save_incoming_message,
     list_messages_for_user,
+    count_unread_messages,
 )
 
 from .twilio_service import (
@@ -34,6 +35,7 @@ from .schemas import (
     SmsSendRequest,
     SmsSendResponse,
     TwilioMessageResponse,
+    UnreadCountResponse,
 )
 
 app = FastAPI(title="ReConnect Backend")
@@ -279,3 +281,14 @@ def get_message_history(
         limit=limit,
         before_id=before_id,
     )
+
+@app.get(
+    "/notifications/unread-count",
+    response_model=UnreadCountResponse,
+)
+def get_unread_count(
+    current_user: dict = Depends(get_current_user),
+):
+    return {
+        "unread_count": count_unread_messages(current_user["id"]),
+    }

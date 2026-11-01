@@ -79,3 +79,6 @@ class TwilioMessageResponse(BaseModel):
     is_read: bool
     created_at: datetime
     updated_at: datetime
+
+class UnreadCountResponse(BaseModel):
+    unread_count: int
