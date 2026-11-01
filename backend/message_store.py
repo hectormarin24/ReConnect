@@ -240,3 +240,71 @@ def count_unread_messages(user_id: int) -> int:
 
         if connection is not None and connection.is_connected():
             connection.close()
+
+def mark_message_as_read(user_id: int, message_id: int):
+    connection = None
+    cursor = None
+
+    try:
+        connection = get_connection()
+        cursor = connection.cursor(dictionary=True)
+
+        cursor.execute(
+            """
+            SELECT m.id
+            FROM twilio_messages AS m
+            JOIN twilio_accounts AS a
+                ON a.id = m.twilio_account_id
+            WHERE m.id = %s
+              AND a.user_id = %s
+            FOR UPDATE
+            """,
+            (message_id, user_id),
+        )
+
+        message = cursor.fetchone()
+
+        if message is None:
+            connection.rollback()
+
+            raise HTTPException(
+                status_code=404,
+                detail="Message not found.",
+            )
+
+        cursor.execute(
+            """
+            UPDATE twilio_messages
+            SET is_read = TRUE
+            WHERE id = %s
+            """,
+            (message_id,),
+        )
+
+        connection.commit()
+
+        return {
+            "id": message_id,
+            "is_read": True,
+        }
+
+    except mysql.connector.Error:
+        if connection is not None:
+            connection.rollback()
+
+        logger.exception(
+            "Unable to mark message %s as read",
+            message_id,
+        )
+
+        raise HTTPException(
+            status_code=500,
+            detail="Unable to mark the message as read.",
+        ) from None
+
+    finally:
+        if cursor is not None:
+            cursor.close()
+
+        if connection is not None and connection.is_connected():
+            connection.close()

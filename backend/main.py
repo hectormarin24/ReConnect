@@ -9,6 +9,7 @@ from .message_store import (
     save_incoming_message,
     list_messages_for_user,
     count_unread_messages,
+    mark_message_as_read,
 )
 
 from .twilio_service import (
@@ -16,6 +17,7 @@ from .twilio_service import (
     list_twilio_accounts,
     list_sms_senders,
     send_sms,
+    send_sms_batch,
     get_owned_twilio_account
 )
 
@@ -36,6 +38,9 @@ from .schemas import (
     SmsSendResponse,
     TwilioMessageResponse,
     UnreadCountResponse,
+    MessageReadResponse,
+    BulkSmsSendRequest,
+    BulkSmsSendResponse,
 )
 
 app = FastAPI(title="ReConnect Backend")
@@ -292,3 +297,34 @@ def get_unread_count(
     return {
         "unread_count": count_unread_messages(current_user["id"]),
     }
+
+@app.patch(
+    "/twilio/messages/{message_id}/read",
+    response_model=MessageReadResponse,
+)
+def mark_twilio_message_read(
+    message_id: int,
+    current_user: dict = Depends(get_current_user),
+):
+    return mark_message_as_read(
+        user_id=current_user["id"],
+        message_id=message_id,
+    )
+
+@app.post(
+    "/twilio/accounts/{account_id}/sms/bulk",
+    response_model=BulkSmsSendResponse,
+)
+def send_account_sms_batch(
+    account_id: int,
+    request: BulkSmsSendRequest,
+    current_user: dict = Depends(get_current_user),
+):
+    return send_sms_batch(
+        user_id=current_user["id"],
+        account_id=account_id,
+        messages=[
+            message.model_dump()
+            for message in request.messages
+        ],
+    )

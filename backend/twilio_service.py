@@ -5,10 +5,13 @@ from twilio.http.http_client import TwilioHttpClient
 from twilio.rest import Client
 import mysql.connector
 from .message_store import save_outgoing_message
+import logging
 
 from .database import get_connection
 from .encryption import encrypt_secret, decrypt_secret
 from cryptography.fernet import InvalidToken
+
+logger = logging.getLogger(__name__)
 
 
 def verify_twilio_credentials(account_sid: str, auth_token: str):
@@ -342,3 +345,80 @@ def send_sms(
     finally:
         if http_client.session is not None:
             http_client.session.close()
+
+def send_sms_batch(
+    user_id: int,
+    account_id: int,
+    messages: list[dict],
+):
+    get_owned_twilio_account(user_id, account_id)
+
+    results = []
+
+    for item in messages:
+        result = {
+            "from_number": item["from_number"],
+            "to_number": item["to_number"],
+        }
+
+        try:
+            sent = send_sms(
+                user_id=user_id,
+                account_id=account_id,
+                from_number=item["from_number"],
+                to_number=item["to_number"],
+                body=item["body"],
+            )
+
+            result.update(
+                outcome="accepted",
+                message=sent,
+            )
+
+        except HTTPException as exc:
+            detail = exc.detail
+
+            result["outcome"] = (
+                "rejected" if exc.status_code < 500 else "unknown"
+            )
+
+            if isinstance(detail, dict):
+                result["error"] = detail.get(
+                    "message",
+                    "The message request failed.",
+                )
+                result["twilio_code"] = detail.get("twilio_code")
+            else:
+                result["error"] = str(detail)
+
+        except Exception:
+            logger.exception(
+                "Unexpected SMS batch error for connection %s",
+                account_id,
+            )
+
+            result.update(
+                outcome="unknown",
+                error=(
+                    "Unable to confirm message submission. "
+                    "Check Twilio logs before retrying."
+                ),
+            )
+
+        results.append(result)
+
+    return {
+        "accepted_count": sum(
+            result["outcome"] == "accepted"
+            for result in results
+        ),
+        "rejected_count": sum(
+            result["outcome"] == "rejected"
+            for result in results
+        ),
+        "unknown_count": sum(
+            result["outcome"] == "unknown"
+            for result in results
+        ),
+        "results": results,
+    }

@@ -1,5 +1,6 @@
-from pydantic import BaseModel, ConfigDict, Field, SecretStr
+from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator
 from datetime import datetime
+from typing import Literal
 
 class LoginRequest(BaseModel):
     email: str
@@ -82,3 +83,43 @@ class TwilioMessageResponse(BaseModel):
 
 class UnreadCountResponse(BaseModel):
     unread_count: int
+
+class MessageReadResponse(BaseModel):
+    id: int
+    is_read: bool
+
+class BulkSmsSendRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    messages: list[SmsSendRequest] = Field(
+        min_length=1,
+        max_length=10,
+    )
+
+    @field_validator("messages")
+    @classmethod
+    def reject_duplicate_recipients(cls, messages):
+        numbers = [message.to_number for message in messages]
+
+        if len(numbers) != len(set(numbers)):
+            raise ValueError(
+                "Each recipient can appear only once per batch."
+            )
+
+        return messages
+
+
+class BulkSmsRecipientResult(BaseModel):
+    from_number: str
+    to_number: str
+    outcome: Literal["accepted", "rejected", "unknown"]
+    message: SmsSendResponse | None = None
+    error: str | None = None
+    twilio_code: int | None = None
+
+
+class BulkSmsSendResponse(BaseModel):
+    accepted_count: int
+    rejected_count: int
+    unknown_count: int
+    results: list[BulkSmsRecipientResult]
