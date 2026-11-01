@@ -1,5 +1,5 @@
 from pydantic import BaseModel, ConfigDict, Field, SecretStr
-
+from datetime import datetime
 
 class LoginRequest(BaseModel):
     email: str
@@ -42,3 +42,40 @@ class TwilioSmsSenderResponse(BaseModel):
     sid: str
     phone_number: str
     friendly_name: str | None = None
+
+class SmsSendRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    from_number: str = Field(
+        pattern=r"^\+[1-9][0-9]{1,14}$",
+    )
+
+    to_number: str = Field(
+        pattern=r"^\+[1-9][0-9]{1,14}$",
+    )
+
+    body: str = Field(
+        min_length=1,
+        max_length=1600,
+    )
+
+
+class SmsSendResponse(BaseModel):
+    sid: str
+    status: str
+    history_saved: bool
+
+class TwilioMessageResponse(BaseModel):
+    id: int
+    twilio_account_id: int
+    message_sid: str
+    channel: str
+    direction: str
+    from_address: str
+    to_address: str
+    body: str
+    status: str
+    error_code: int | None
+    is_read: bool
+    created_at: datetime
+    updated_at: datetime

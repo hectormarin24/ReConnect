@@ -1,11 +1,21 @@
-from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi import Depends, FastAPI, HTTPException, Request, Response, Query
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
+from starlette.concurrency import run_in_threadpool
+from .twilio_webhooks import validate_twilio_webhook
+import os
+
+from .message_store import (
+    save_incoming_message,
+    list_messages_for_user,
+)
 
 from .twilio_service import (
     connect_twilio_account,
     list_twilio_accounts,
     list_sms_senders,
+    send_sms,
+    get_owned_twilio_account
 )
 
 from .auth import (
@@ -21,6 +31,9 @@ from .schemas import (
     TwilioAccountConnectRequest,
     TwilioAccountResponse,
     TwilioSmsSenderResponse,
+    SmsSendRequest,
+    SmsSendResponse,
+    TwilioMessageResponse,
 )
 
 app = FastAPI(title="ReConnect Backend")
@@ -139,4 +152,130 @@ def get_sms_senders(
     return list_sms_senders(
         user_id=current_user["id"],
         account_id=account_id,
+    )
+
+@app.post(
+    "/twilio/accounts/{account_id}/sms",
+    status_code=201,
+    response_model=SmsSendResponse,
+)
+def send_account_sms(
+    account_id: int,
+    request: SmsSendRequest,
+    current_user: dict = Depends(get_current_user),
+):
+    return send_sms(
+        user_id=current_user["id"],
+        account_id=account_id,
+        from_number=request.from_number,
+        to_number=request.to_number,
+        body=request.body,
+    )
+
+@app.post("/webhooks/twilio/incoming")
+async def receive_twilio_message(request: Request):
+    content_type = (
+        request.headers.get("content-type", "")
+        .split(";", 1)[0]
+        .strip()
+        .lower()
+    )
+
+    if content_type != "application/x-www-form-urlencoded":
+        raise HTTPException(
+            status_code=415,
+            detail="Expected a form-encoded Twilio webhook.",
+        )
+
+    base_url = os.getenv("TWILIO_WEBHOOK_BASE_URL", "").rstrip("/")
+
+    if not base_url:
+        raise HTTPException(
+            status_code=503,
+            detail="The public webhook URL is not configured.",
+        )
+
+    public_url = f"{base_url}/webhooks/twilio/incoming"
+
+    if request.url.query:
+        public_url += f"?{request.url.query}"
+
+    form = await request.form()
+    signature = request.headers.get("X-Twilio-Signature", "")
+
+    account_id = await run_in_threadpool(
+        validate_twilio_webhook,
+        public_url,
+        form,
+        signature,
+    )
+
+    message_sid = form.get("MessageSid")
+    from_address = form.get("From")
+    to_address = form.get("To")
+    body = form.get("Body", "")
+
+    required_values = (message_sid, from_address, to_address)
+
+    if not all(
+        isinstance(value, str) and value
+        for value in required_values
+    ):
+        raise HTTPException(
+            status_code=400,
+            detail="MessageSid, From, and To are required.",
+        )
+
+    if (
+        len(message_sid) != 34
+        or len(from_address) > 64
+        or len(to_address) > 64
+        or not isinstance(body, str)
+    ):
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid incoming-message fields.",
+        )
+
+    channel = (
+        "whatsapp"
+        if from_address.startswith("whatsapp:")
+        else "sms"
+    )
+
+    saved = await run_in_threadpool(
+        save_incoming_message,
+        account_id,
+        message_sid,
+        channel,
+        from_address,
+        to_address,
+        body,
+    )
+
+    if not saved:
+        raise HTTPException(
+            status_code=503,
+            detail="Unable to save the incoming message.",
+        )
+
+    return Response(status_code=204)
+
+@app.get(
+    "/twilio/accounts/{account_id}/messages",
+    response_model=list[TwilioMessageResponse],
+)
+def get_message_history(
+    account_id: int,
+    limit: int = Query(default=50, ge=1, le=100),
+    before_id: int | None = Query(default=None, gt=0),
+    current_user: dict = Depends(get_current_user),
+):
+    get_owned_twilio_account(current_user["id"], account_id)
+
+    return list_messages_for_user(
+        user_id=current_user["id"],
+        account_id=account_id,
+        limit=limit,
+        before_id=before_id,
     )

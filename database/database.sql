@@ -50,3 +50,46 @@ CREATE TABLE IF NOT EXISTS twilio_accounts (
         REFERENCES admin_users(id)
         ON DELETE CASCADE
 );
+
+CREATE TABLE IF NOT EXISTS twilio_messages (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    twilio_account_id INT NOT NULL,
+
+    message_sid CHAR(34)
+        CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+
+    channel ENUM('sms', 'whatsapp') NOT NULL,
+    direction ENUM('inbound', 'outbound') NOT NULL,
+
+    from_address VARCHAR(64) NOT NULL,
+    to_address VARCHAR(64) NOT NULL,
+    body TEXT NOT NULL,
+
+    status VARCHAR(32) NOT NULL,
+    error_code INT DEFAULT NULL,
+
+    is_read BOOLEAN NOT NULL DEFAULT FALSE,
+
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+        ON UPDATE CURRENT_TIMESTAMP,
+
+    UNIQUE KEY uq_twilio_messages_sid (message_sid),
+
+    INDEX idx_twilio_messages_account_created (
+        twilio_account_id,
+        created_at,
+        id
+    ),
+
+    INDEX idx_twilio_messages_account_unread (
+        twilio_account_id,
+        direction,
+        is_read
+    ),
+
+    CONSTRAINT fk_twilio_messages_account
+        FOREIGN KEY (twilio_account_id)
+        REFERENCES twilio_accounts(id)
+        ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

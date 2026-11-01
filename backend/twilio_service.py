@@ -4,6 +4,7 @@ from twilio.base.exceptions import TwilioRestException
 from twilio.http.http_client import TwilioHttpClient
 from twilio.rest import Client
 import mysql.connector
+from .message_store import save_outgoing_message
 
 from .database import get_connection
 from .encryption import encrypt_secret, decrypt_secret
@@ -257,6 +258,85 @@ def list_sms_senders(user_id: int, account_id: int):
         raise HTTPException(
             status_code=503,
             detail="Unable to reach Twilio. Try again later.",
+        ) from None
+
+    finally:
+        if http_client.session is not None:
+            http_client.session.close()
+
+def send_sms(
+    user_id: int,
+    account_id: int,
+    from_number: str,
+    to_number: str,
+    body: str,
+):
+    account = get_owned_twilio_account(user_id, account_id)
+
+    try:
+        auth_token = decrypt_secret(account["auth_token_encrypted"])
+
+    except InvalidToken:
+        raise HTTPException(
+            status_code=500,
+            detail="Unable to decrypt the stored Twilio credentials.",
+        ) from None
+
+    http_client = TwilioHttpClient(
+        timeout=10,
+        max_retries=0,
+    )
+
+    client = Client(
+        account["account_sid"],
+        auth_token,
+        http_client=http_client,
+    )
+
+    try:
+        message = client.messages.create(
+            from_=from_number,
+            to=to_number,
+            body=body,
+        )
+
+        history_saved = save_outgoing_message(
+            account_id=account["id"],
+            channel="sms",
+            message=message,
+        )
+
+        return {
+            "sid": message.sid,
+            "status": message.status,
+            "history_saved": history_saved,
+        }
+
+    except TwilioRestException as exc:
+        if exc.status == 429 or exc.status >= 500:
+            raise HTTPException(
+                status_code=503,
+                detail=(
+                    "Twilio is temporarily unavailable. "
+                    "Check Twilio logs before retrying."
+                ),
+            ) from None
+
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "message": "Twilio rejected the SMS request.",
+                "twilio_code": exc.code,
+            },
+        ) from None
+
+    except RequestException:
+        raise HTTPException(
+            status_code=502,
+            detail=(
+                "Unable to confirm whether Twilio accepted the message. "
+                "Check Twilio logs before retrying."
+            ),
         ) from None
 
     finally:
