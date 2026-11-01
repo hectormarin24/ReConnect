@@ -30,3 +30,10 @@ class TwilioAccountConnectRequest(BaseModel):
         min_length=1,
         max_length=128,
     )
+
+class TwilioAccountResponse(BaseModel):
+    id: int
+    label: str
+    account_sid: str
+    sms_number: str | None
+    whatsapp_number: str | None
