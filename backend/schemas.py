@@ -37,3 +37,8 @@ class TwilioAccountResponse(BaseModel):
     account_sid: str
     sms_number: str | None
     whatsapp_number: str | None
+
+class TwilioSmsSenderResponse(BaseModel):
+    sid: str
+    phone_number: str
+    friendly_name: str | None = None

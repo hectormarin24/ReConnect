@@ -6,7 +6,8 @@ from twilio.rest import Client
 import mysql.connector
 
 from .database import get_connection
-from .encryption import encrypt_secret
+from .encryption import encrypt_secret, decrypt_secret
+from cryptography.fernet import InvalidToken
 
 
 def verify_twilio_credentials(account_sid: str, auth_token: str):
@@ -159,3 +160,105 @@ def list_twilio_accounts(user_id: int):
 
         if connection is not None and connection.is_connected():
             connection.close()
+
+def get_owned_twilio_account(user_id: int, account_id: int):
+    connection = None
+    cursor = None
+
+    try:
+        connection = get_connection()
+        cursor = connection.cursor(dictionary=True)
+
+        cursor.execute(
+            """
+            SELECT
+                id,
+                label,
+                account_sid,
+                auth_token_encrypted,
+                sms_number,
+                whatsapp_number
+            FROM twilio_accounts
+            WHERE id = %s
+              AND user_id = %s
+            """,
+            (account_id, user_id),
+        )
+
+        account = cursor.fetchone()
+
+        if account is None:
+            raise HTTPException(
+                status_code=404,
+                detail="Twilio connection not found.",
+            )
+
+        return account
+
+    except mysql.connector.Error:
+        raise HTTPException(
+            status_code=500,
+            detail="Unable to load the Twilio connection.",
+        ) from None
+
+    finally:
+        if cursor is not None:
+            cursor.close()
+
+        if connection is not None and connection.is_connected():
+            connection.close()
+
+def list_sms_senders(user_id: int, account_id: int):
+    account = get_owned_twilio_account(user_id, account_id)
+
+    try:
+        auth_token = decrypt_secret(account["auth_token_encrypted"])
+
+    except InvalidToken:
+        raise HTTPException(
+            status_code=500,
+            detail="Unable to decrypt the stored Twilio credentials.",
+        ) from None
+
+    http_client = TwilioHttpClient(timeout=10)
+
+    client = Client(
+        account["account_sid"],
+        auth_token,
+        http_client=http_client,
+    )
+
+    try:
+        numbers = client.incoming_phone_numbers.list(limit=100)
+
+        return [
+            {
+                "sid": number.sid,
+                "phone_number": number.phone_number,
+                "friendly_name": number.friendly_name,
+            }
+            for number in numbers
+            if (number.capabilities or {}).get("sms", False)
+        ]
+
+    except TwilioRestException as exc:
+        if exc.status == 429 or exc.status >= 500:
+            raise HTTPException(
+                status_code=503,
+                detail="Twilio is temporarily unavailable. Try again later.",
+            ) from None
+
+        raise HTTPException(
+            status_code=502,
+            detail="Twilio could not load numbers for this connection.",
+        ) from None
+
+    except RequestException:
+        raise HTTPException(
+            status_code=503,
+            detail="Unable to reach Twilio. Try again later.",
+        ) from None
+
+    finally:
+        if http_client.session is not None:
+            http_client.session.close()

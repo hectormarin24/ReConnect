@@ -5,6 +5,7 @@ from fastapi.responses import JSONResponse
 from .twilio_service import (
     connect_twilio_account,
     list_twilio_accounts,
+    list_sms_senders,
 )
 
 from .auth import (
@@ -19,6 +20,7 @@ from .schemas import (
     RegisterRequest,
     TwilioAccountConnectRequest,
     TwilioAccountResponse,
+    TwilioSmsSenderResponse,
 )
 
 app = FastAPI(title="ReConnect Backend")
@@ -125,3 +127,16 @@ def get_twilio_accounts(
     current_user: dict = Depends(get_current_user),
 ):
     return list_twilio_accounts(current_user["id"])
+
+@app.get(
+    "/twilio/accounts/{account_id}/sms-senders",
+    response_model=list[TwilioSmsSenderResponse],
+)
+def get_sms_senders(
+    account_id: int,
+    current_user: dict = Depends(get_current_user),
+):
+    return list_sms_senders(
+        user_id=current_user["id"],
+        account_id=account_id,
+    )
