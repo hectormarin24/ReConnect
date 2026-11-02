@@ -5,6 +5,13 @@ from starlette.concurrency import run_in_threadpool
 from .twilio_webhooks import validate_twilio_webhook
 import os
 
+import logging
+
+from mysql.connector import Error as MySQLError
+from twilio.twiml.messaging_response import MessagingResponse
+
+from .registration import process_registration_message
+
 from .message_store import (
     save_incoming_message,
     list_messages_for_user,
@@ -42,6 +49,8 @@ from .schemas import (
     BulkSmsSendRequest,
     BulkSmsSendResponse,
 )
+
+logger = logging.getLogger(__name__)
 
 app = FastAPI(title="ReConnect Backend")
 
@@ -266,7 +275,50 @@ async def receive_twilio_message(request: Request):
             detail="Unable to save the incoming message.",
         )
 
-    return Response(status_code=204)
+    if channel != "sms":
+        return Response(status_code=204)
+
+    opt_out_type = form.get("OptOutType", "")
+
+    if opt_out_type not in ("", "STOP", "START", "HELP"):
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid OptOutType.",
+        )
+
+    try:
+        reply = await run_in_threadpool(
+            process_registration_message,
+            account_id,
+            message_sid,
+            opt_out_type,
+        )
+
+    except (MySQLError, RuntimeError, ValueError) as error:
+        logger.error(
+            "Registration failed for message %s: %s, database code %s",
+            message_sid,
+            type(error).__name__,
+            getattr(error, "errno", None),
+        )
+
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "Registration is temporarily unavailable. "
+                "Please retry."
+            ),
+        ) from None
+
+    response = MessagingResponse()
+
+    if reply:
+        response.message(reply)
+
+    return Response(
+        content=str(response),
+        media_type="application/xml",
+    )
 
 @app.get(
     "/twilio/accounts/{account_id}/messages",

@@ -1,8 +1,12 @@
 import re
 from.database import get_connection #check database.py for get_connection
 
-def get_contact_by_phone(phone: str):  #function that checks for a contact via phone number
-    connection = get_connection()
+def get_contact_by_phone(phone: str, connection=None):
+    owns_connection = connection is None
+
+    if owns_connection:
+        connection = get_connection()
+
     cursor = None
 
     try:
@@ -18,43 +22,63 @@ def get_contact_by_phone(phone: str):  #function that checks for a contact via p
         )
 
         return cursor.fetchone()
+
     finally:
         if cursor is not None:
             cursor.close()
 
-        connection.close()
-def create_contact(name: str, email: str, phone: str):
-    connection = get_connection()
+        if owns_connection:
+            connection.close()
+def create_contact(
+    name: str,
+    email: str,
+    phone: str,
+    connection=None,
+):
+    owns_connection = connection is None
+
+    if owns_connection:
+        connection = get_connection()
+
     cursor = None
-    
+
     try:
-        cursor = connection.cursor() #(dictionary = True) is not necessasry here because an insert doesn't return rows.
+        cursor = connection.cursor()
 
         cursor.execute(
             """
             INSERT INTO contacts (name, email, phone)
             VALUES (%s, %s, %s)
             """,
-            (name, email, phone)
+            (name, email, phone),
         )
 
-        contact_id = cursor.lastrowid #gets the ID mySQL assigned to the new contact
-        connection.commit()
+        contact_id = cursor.lastrowid
 
-        return contact_id #for sms code result
-    
+        if owns_connection:
+            connection.commit()
+
+        return contact_id
+
     except Exception:
-        connection.rollback()
+        if owns_connection:
+            connection.rollback()
+
         raise
 
     finally:
         if cursor is not None:
             cursor.close()
 
-        connection.close()
-   
-def get_registration_session(phone: str):
-    connection = get_connection()
+        if owns_connection:
+            connection.close()
+            
+def get_registration_session(phone: str, connection=None):
+    owns_connection = connection is None
+
+    if owns_connection:
+        connection = get_connection()
+
     cursor = None
 
     try:
@@ -62,27 +86,33 @@ def get_registration_session(phone: str):
 
         cursor.execute(
             """
-            Select phone, stage, name, updated_at
+            SELECT phone, stage, name, updated_at
             FROM registration_sessions
             WHERE phone = %s
             """,
             (phone,),
         )
-        
+
         return cursor.fetchone()
-    
+
     finally:
         if cursor is not None:
             cursor.close()
 
-        connection.close()
+        if owns_connection:
+            connection.close()
 
-def start_registration_session(phone: str):
-    connection = get_connection()
+def start_registration_session(phone: str, connection=None):
+    owns_connection = connection is None
+
+    if owns_connection:
+        connection = get_connection()
+
     cursor = None
 
     try:
         cursor = connection.cursor()
+
         cursor.execute(
             """
             INSERT INTO registration_sessions (phone, stage)
@@ -91,55 +121,77 @@ def start_registration_session(phone: str):
             (phone,),
         )
 
-        connection.commit()
+        if owns_connection:
+            connection.commit()
 
     except Exception:
-        connection.rollback()
+        if owns_connection:
+            connection.rollback()
+
         raise
 
     finally:
         if cursor is not None:
             cursor.close()
 
-        connection.close()
+        if owns_connection:
+            connection.close()
 
-def save_registration_name(phone: str, name: str):
+def save_registration_name(
+    phone: str,
+    name: str,
+    connection=None,
+):
     name = name.strip()
 
     if not name or len(name) > 150:
-        raise ValueError("name must contain 1 to 150 characters.")
-    
-    connection = get_connection()
+        raise ValueError("Name must contain 1 to 150 characters.")
+
+    owns_connection = connection is None
+
+    if owns_connection:
+        connection = get_connection()
+
     cursor = None
 
-    try: 
+    try:
         cursor = connection.cursor()
 
         cursor.execute(
             """
             UPDATE registration_sessions
-            SET name = %s, stage = 'awaiting_email' 
+            SET name = %s, stage = 'awaiting_email'
             WHERE phone = %s
-            AND stage = 'awaiting_name'
+              AND stage = 'awaiting_name'
             """,
             (name, phone),
         )
+
         updated = cursor.rowcount == 1
-        connection.commit()
+
+        if owns_connection:
+            connection.commit()
 
         return updated
 
     except Exception:
-        connection.rollback()
+        if owns_connection:
+            connection.rollback()
+
         raise
-    
+
     finally:
         if cursor is not None:
             cursor.close()
-        
-        connection.close()
 
-def complete_registration(phone: str, email: str):
+        if owns_connection:
+            connection.close()
+
+def complete_registration(
+    phone: str,
+    email: str,
+    connection=None,
+):
     email = email.strip()
 
     if (
@@ -147,8 +199,12 @@ def complete_registration(phone: str, email: str):
         or not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", email)
     ):
         raise ValueError("Please enter a valid email address.")
-    
-    connection = get_connection()
+
+    owns_connection = connection is None
+
+    if owns_connection:
+        connection = get_connection()
+
     cursor = None
 
     try:
@@ -163,21 +219,23 @@ def complete_registration(phone: str, email: str):
             """,
             (phone,),
         )
+
         session = cursor.fetchone()
 
         if session is None:
             raise ValueError("No registration session exists.")
-        
+
         if session["stage"] != "awaiting_email":
-            raise ValueError("Registration is not ready for an email") 
-        
+            raise ValueError("Registration is not ready for an email.")
+
         cursor.execute(
             """
-                INSERT INTO contacts (name, email, phone)
-                Values (%s, %s, %s)
-                """,
-                (session["name"], email, phone),
+            INSERT INTO contacts (name, email, phone)
+            VALUES (%s, %s, %s)
+            """,
+            (session["name"], email, phone),
         )
+
         contact_id = cursor.lastrowid
 
         cursor.execute(
@@ -187,12 +245,21 @@ def complete_registration(phone: str, email: str):
             """,
             (phone,),
         )
-        connection.commit()
+
+        if owns_connection:
+            connection.commit()
+
         return contact_id
+
     except Exception:
-        connection.rollback()
+        if owns_connection:
+            connection.rollback()
+
         raise
+
     finally:
         if cursor is not None:
             cursor.close()
-        connection.close()
+
+        if owns_connection:
+            connection.close()
