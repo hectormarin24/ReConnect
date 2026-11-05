@@ -14,7 +14,7 @@ def list_contacts(search: str | None = None, tag: str | None = None):
         cursor = connection.cursor(dictionary=True)
 
         query = """
-            SELECT id, fname, lname, mname, email, phone_number, tags
+            SELECT id, full_name, email, phone_number, tags
             FROM contacts
             WHERE 1 = 1
         """
@@ -23,8 +23,7 @@ def list_contacts(search: str | None = None, tag: str | None = None):
         if search:
             query += """
                 AND (
-                    fname LIKE %s OR
-                    lname LIKE %s OR
+                    full_name LIKE %s OR
                     email LIKE %s OR
                     phone_number LIKE %s
                 )
@@ -36,7 +35,7 @@ def list_contacts(search: str | None = None, tag: str | None = None):
             query += " AND JSON_CONTAINS(tags, JSON_ARRAY(%s)) "
             params.append(tag)
 
-        query += " ORDER BY fname ASC"
+        query += " ORDER BY full_name ASC"
 
         cursor.execute(query, tuple(params))
         return cursor.fetchall()
@@ -61,7 +60,7 @@ def get_contact_by_id(contact_id: int):
         cursor = connection.cursor(dictionary=True)
         cursor.execute(
             """
-            SELECT id, fname, lname, mname, email, phone_number, tags
+            SELECT id, full_name, email, phone_number, tags
             FROM contacts
             WHERE id = %s
             """,
@@ -95,13 +94,11 @@ def create_contact(payload):
 
         cursor.execute(
             """
-            INSERT INTO contacts (fname, lname, mname, email, phone_number, tags)
-            VALUES (%s, %s, %s, %s, %s, %s)
+            INSERT INTO contacts (full_name, email, phone_number, tags)
+            VALUES (%s, %s, %s, %s)
             """,
             (
-                payload.fname,
-                payload.lname,
-                payload.mname,
+                payload.full_name,
                 payload.email,
                 payload.phone_number,
                 tags_json,
@@ -132,7 +129,7 @@ def update_contact(contact_id: int, payload):
 
     data = current.copy()
 
-    for field in ["fname", "lname", "mname", "email", "phone_number"]:
+    for field in ["full_name", "email", "phone_number"]:
         value = getattr(payload, field, None)
         if value is not None:
             data[field] = value
@@ -150,13 +147,11 @@ def update_contact(contact_id: int, payload):
         cursor.execute(
             """
             UPDATE contacts
-            SET fname=%s, lname=%s, mname=%s, email=%s, phone_number=%s, tags=%s
+            SET full_name=%s, email=%s, phone_number=%s, tags=%s
             WHERE id=%s
             """,
             (
-                data.get("fname"),
-                data.get("lname"),
-                data.get("mname"),
+                data.get("full_name"),
                 data.get("email"),
                 data.get("phone_number"),
                 json.dumps(data.get("tags", [])),

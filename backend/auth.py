@@ -1,7 +1,15 @@
 import bcrypt
+import hashlib
+import secrets
+from datetime import datetime, timedelta, timezone
+
 import mysql.connector
+from fastapi import Depends, HTTPException
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+
 from .database import get_connection
 
+bearer_scheme = HTTPBearer(auto_error=False)
 
 def create_user(full_name: str, email: str, password: str):
     connection = None
@@ -36,8 +44,6 @@ def create_user(full_name: str, email: str, password: str):
 
         if connection is not None and connection.is_connected():
             connection.close()
-
-
 
 def authenticate_user(email: str, password: str):
     connection = None
@@ -79,5 +85,99 @@ def authenticate_user(email: str, password: str):
         if cursor is not None:
             cursor.close()
 
+        if connection is not None and connection.is_connected():
+            connection.close()
+
+def create_session(user_id: int):
+    token = secrets.token_urlsafe(32)
+
+    token_hash = hashlib.sha256(
+        token.encode("utf-8")
+    ).hexdigest()
+
+    expires_at = (
+        datetime.now(timezone.utc) + timedelta(hours=8)
+    ).replace(tzinfo=None, microsecond=0)
+
+    connection = None
+    cursor = None
+
+    try:
+        connection = get_connection()
+        cursor = connection.cursor()
+
+        cursor.execute(
+            """
+            INSERT INTO user_sessions
+                (token_hash, user_id, expires_at)
+            VALUES (%s, %s, %s)
+            """,
+            (token_hash, user_id, expires_at),
+        )
+
+        connection.commit()
+
+        return token
+
+    except mysql.connector.Error:
+        if connection is not None:
+            connection.rollback()
+
+        raise
+
+    finally:
+        if cursor is not None:
+            cursor.close()
+
+        if connection is not None and connection.is_connected():
+            connection.close()
+
+def get_current_user(
+    credentials: HTTPAuthorizationCredentials | None = Depends(bearer_scheme),
+):
+    unauthorized = HTTPException(
+        status_code=401,
+        detail="Invalid or expired session.",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+
+    if credentials is None:
+        raise unauthorized
+
+    token_hash = hashlib.sha256(
+        credentials.credentials.encode("utf-8")
+    ).hexdigest()
+
+    connection = None
+    cursor = None
+
+    try:
+        connection = get_connection()
+        cursor = connection.cursor(dictionary=True)
+
+        cursor.execute(
+            """
+            SELECT
+                u.id,
+                u.full_name,
+                u.email
+            FROM user_sessions AS s
+            JOIN admin_users AS u ON u.id = s.user_id
+            WHERE s.token_hash = %s
+              AND s.expires_at > UTC_TIMESTAMP()
+            """,
+            (token_hash,),
+        )
+
+        user = cursor.fetchone()
+
+        if user is None:
+            raise unauthorized
+
+        return user
+
+    finally:
+        if cursor is not None:
+            cursor.close()
         if connection is not None and connection.is_connected():
             connection.close()
