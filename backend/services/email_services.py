@@ -6,10 +6,21 @@ import smtplib
 from email.message import EmailMessage
 from email.utils import parseaddr
 
+import mysql.connector
+
 from ..database import get_connection
 
 
-def save_email_message(contact_id, direction, from_email, to_email, subject, body):
+def save_email_message(
+    contact_id,
+    direction,
+    from_email,
+    to_email,
+    subject,
+    body,
+    imap_uidvalidity=None,
+    imap_uid=None,
+):
     connection = None
     cursor = None
 
@@ -43,9 +54,11 @@ def save_email_message(contact_id, direction, from_email, to_email, subject, bod
                 body,
                 status,
                 sent_at,
-                received_at
+                received_at,
+                imap_uidvalidity,
+                imap_uid
             )
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             """,
             (
                 contact_id,
@@ -57,11 +70,25 @@ def save_email_message(contact_id, direction, from_email, to_email, subject, bod
                 "sent" if direction == "outbound" else "received",
                 None if direction == "inbound" else datetime.datetime.now(),
                 None if direction == "outbound" else datetime.datetime.now(),
+                imap_uidvalidity,
+                imap_uid,
             ),
         )
 
+        inserted = cursor.rowcount > 0
         connection.commit()
-        return True
+        return inserted
+    except mysql.connector.IntegrityError as exc:
+        if connection is not None:
+            connection.rollback()
+        if (
+            imap_uidvalidity is not None
+            and imap_uid is not None
+            and exc.errno == mysql.connector.errorcode.ER_DUP_ENTRY
+        ):
+            return False
+        print(f"Error saving email message: {exc}")
+        return False
     except Exception as exc:
         if connection is not None:
             connection.rollback()
@@ -118,15 +145,32 @@ def fetch_inbound_emails():
     try:
         mail = imaplib.IMAP4_SSL(imap_host)
         mail.login(username, password)
-        mail.select("inbox")
+        status, _ = mail.select("inbox")
+        if status != "OK":
+            raise RuntimeError("Unable to select the inbox.")
 
-        status, data = mail.search(None, "ALL")
-        message_ids = data[0].split()
+        _, uidvalidity_data = mail.response("UIDVALIDITY")
+        if not uidvalidity_data or not uidvalidity_data[0]:
+            raise RuntimeError("The IMAP server did not provide UIDVALIDITY.")
+        uidvalidity = int(uidvalidity_data[0])
+
+        status, data = mail.uid("search", None, "ALL")
+        if status != "OK":
+            raise RuntimeError("Unable to search the inbox.")
+
+        message_uids = data[0].split()
         messages = []
 
-        for msg_id in message_ids:
-            status, msg_data = mail.fetch(msg_id, "(RFC822)")
-            raw_email = msg_data[0][1]
+        for message_uid in message_uids:
+            status, msg_data = mail.uid("fetch", message_uid, "(RFC822)")
+            if status != "OK":
+                raise RuntimeError(f"Unable to fetch inbox message UID {message_uid!r}.")
+
+            raw_email = next(
+                item[1]
+                for item in msg_data
+                if isinstance(item, tuple) and isinstance(item[1], bytes)
+            )
             message = email.message_from_bytes(raw_email)
 
             body = ""
@@ -149,16 +193,19 @@ def fetch_inbound_emails():
                 "body": body,
             }
 
-            messages.append(msg_record)
             from_email = parseaddr(message.get("From", ""))[1]
-            save_email_message(
+            inserted = save_email_message(
                 contact_id=None,
                 direction="inbound",
                 from_email=from_email,
                 to_email=message.get("To"),
                 subject=message.get("Subject"),
                 body=body,
+                imap_uidvalidity=uidvalidity,
+                imap_uid=int(message_uid),
             )
+            if inserted:
+                messages.append(msg_record)
 
         mail.logout()
         return messages

@@ -32,6 +32,9 @@ CREATE TABLE IF NOT EXISTS email_messages (
     status ENUM('queued','sent','delivered','failed','received') DEFAULT 'sent',
     sent_at TIMESTAMP NULL,
     received_at TIMESTAMP NULL,
+    imap_uidvalidity BIGINT UNSIGNED NULL,
+    imap_uid BIGINT UNSIGNED NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE KEY unique_imap_message (imap_uidvalidity, imap_uid),
     FOREIGN KEY (contact_id) REFERENCES contacts(id)
 );
