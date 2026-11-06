@@ -12,6 +12,20 @@ class RegisterRequest(BaseModel):
     email: str
     password: str
 
+class ContactCreate(BaseModel):
+    full_name: str
+    email: str | None = None
+    phone_number: str | None = None
+    tags: list[str] = Field(default_factory=list)
+
+
+class ContactUpdate(BaseModel):
+    full_name: str | None = None
+    email: str | None = None
+    phone_number: str | None = None
+    tags: list[str] | None = None
+
+
 class TwilioAccountConnectRequest(BaseModel):
     model_config = ConfigDict(
         str_strip_whitespace=True,

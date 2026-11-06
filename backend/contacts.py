@@ -1,5 +1,6 @@
 import re
-from.database import get_connection #check database.py for get_connection
+
+from .database import get_connection
 
 def get_contact_by_phone(phone: str, connection=None):
     owns_connection = connection is None
@@ -14,9 +15,9 @@ def get_contact_by_phone(phone: str, connection=None):
 
         cursor.execute(
             """
-            SELECT id, name, email, phone, created_at
+            SELECT id, full_name, email, phone_number, created_at
             FROM contacts
-            WHERE phone = %s
+            WHERE phone_number = %s
             """,
             (phone,),
         )
@@ -30,7 +31,7 @@ def get_contact_by_phone(phone: str, connection=None):
         if owns_connection:
             connection.close()
 def create_contact(
-    name: str,
+    full_name: str,
     email: str,
     phone: str,
     connection=None,
@@ -47,10 +48,10 @@ def create_contact(
 
         cursor.execute(
             """
-            INSERT INTO contacts (name, email, phone)
+            INSERT INTO contacts (full_name, email, phone_number)
             VALUES (%s, %s, %s)
             """,
-            (name, email, phone),
+            (full_name, email, phone),
         )
 
         contact_id = cursor.lastrowid
@@ -212,7 +213,7 @@ def complete_registration(
 
         cursor.execute(
             """
-            SELECT name, stage
+            SELECT name AS full_name, stage
             FROM registration_sessions
             WHERE phone = %s
             FOR UPDATE
@@ -230,10 +231,10 @@ def complete_registration(
 
         cursor.execute(
             """
-            INSERT INTO contacts (name, email, phone)
+            INSERT INTO contacts (full_name, email, phone_number)
             VALUES (%s, %s, %s)
             """,
-            (session["name"], email, phone),
+            (session["full_name"], email, phone),
         )
 
         contact_id = cursor.lastrowid

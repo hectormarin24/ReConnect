@@ -1,5 +1,6 @@
 # ReConnect
 Tarbiya Institute
+
 ## SMS contact registration
 
 Registration is enabled for one designated Twilio account and number.
@@ -24,9 +25,8 @@ Preserve TWILIO_ENCRYPTION_KEY after storing Twilio credentials.
 For a new local database, run these SQL files in order:
 
 1. database/database.sql
-2. database/contacts.sql
-3. database/registration_sessions.sql
-4. database/registration_runtime.sql
+2. database/registration_sessions.sql
+3. database/registration_runtime.sql
 
 Install dependencies:
 
@@ -54,5 +54,5 @@ order is not guaranteed.
 
 Twilio manages SMS opt-in/out/help responses. Application control-word
 handling must match the sender's Twilio configuration.
-
+Never commit .env.
 Never commit .env.

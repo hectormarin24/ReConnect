@@ -1,32 +1,12 @@
+import logging
+import os
+
 from fastapi import Depends, FastAPI, HTTPException, Request, Response, Query
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from starlette.concurrency import run_in_threadpool
-from .twilio_webhooks import validate_twilio_webhook
-import os
-
-import logging
-
 from mysql.connector import Error as MySQLError
 from twilio.twiml.messaging_response import MessagingResponse
-
-from .registration import process_registration_message
-
-from .message_store import (
-    save_incoming_message,
-    list_messages_for_user,
-    count_unread_messages,
-    mark_message_as_read,
-)
-
-from .twilio_service import (
-    connect_twilio_account,
-    list_twilio_accounts,
-    list_sms_senders,
-    send_sms,
-    send_sms_batch,
-    get_owned_twilio_account
-)
 
 from .auth import (
     authenticate_user,
@@ -34,7 +14,8 @@ from .auth import (
     create_session,
     get_current_user,
 )
-
+from .registration import process_registration_message
+from .routing.contacts import router as contacts_router
 from .schemas import (
     LoginRequest,
     RegisterRequest,
@@ -49,10 +30,26 @@ from .schemas import (
     BulkSmsSendRequest,
     BulkSmsSendResponse,
 )
+from .message_store import (
+    save_incoming_message,
+    list_messages_for_user,
+    count_unread_messages,
+    mark_message_as_read,
+)
+from .twilio_service import (
+    connect_twilio_account,
+    list_twilio_accounts,
+    list_sms_senders,
+    send_sms,
+    send_sms_batch,
+    get_owned_twilio_account,
+)
+from .twilio_webhooks import validate_twilio_webhook
 
 logger = logging.getLogger(__name__)
 
 app = FastAPI(title="ReConnect Backend")
+app.include_router(contacts_router, prefix="/admin", tags=["contacts"])
 
 @app.exception_handler(RequestValidationError)
 async def handle_validation_error(
@@ -125,6 +122,7 @@ def login(request: LoginRequest):
         "access_token": token,
         "token_type": "bearer",
     }
+
 
 @app.get("/auth/me")
 def get_my_account(current_user: dict = Depends(get_current_user)):

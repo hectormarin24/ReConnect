@@ -70,7 +70,6 @@ class RegistrationTests(unittest.TestCase):
 
             filenames = (
                 "database.sql",
-                "contacts.sql",
                 "registration_sessions.sql",
                 "registration_runtime.sql",
             )
@@ -284,7 +283,7 @@ class RegistrationTests(unittest.TestCase):
 
         contact = contacts.get_contact_by_phone(self.phone)
 
-        self.assertEqual(contact["name"], "Test Person")
+        self.assertEqual(contact["full_name"], "Test Person")
 
         self.assertIsNone(
             contacts.get_registration_session(self.phone)
