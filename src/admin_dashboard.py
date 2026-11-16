@@ -1,12 +1,16 @@
+import argparse
+import json
 import sys
 from functools import partial
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QCoreApplication, Qt
 from PySide6.QtGui import QColor, QFont
+from PySide6.QtNetwork import QLocalServer, QLocalSocket
 from PySide6.QtWidgets import (
     QApplication,
     QButtonGroup,
     QFrame,
+    QGraphicsBlurEffect,
     QGraphicsDropShadowEffect,
     QHBoxLayout,
     QLabel,
@@ -17,6 +21,14 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
+
+from popups.contact_detected import (
+    ContactDetectedPopup,
+    ContactNotification,
+    MinimizedContactNotification,
+)
+
+NOTIFICATION_SERVER_NAME = "reconnect-admin-dashboard"
 
 
 STYLESHEET = """
@@ -405,7 +417,18 @@ class ReConnectWindow(QMainWindow):
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
 
-        main_layout = QHBoxLayout(central_widget)
+        root_layout = QVBoxLayout(central_widget)
+        root_layout.setContentsMargins(0, 0, 0, 0)
+        root_layout.setSpacing(0)
+
+        self.app_content = QWidget(central_widget)
+        root_layout.addWidget(self.app_content)
+        self.content_blur_effect = QGraphicsBlurEffect(self.app_content)
+        self.content_blur_effect.setBlurRadius(5)
+        self.content_blur_effect.setEnabled(False)
+        self.app_content.setGraphicsEffect(self.content_blur_effect)
+
+        main_layout = QHBoxLayout(self.app_content)
         main_layout.setContentsMargins(0, 0, 0, 0)
         main_layout.setSpacing(0)
 
@@ -423,7 +446,64 @@ class ReConnectWindow(QMainWindow):
         ):
             self.add_page(name, self.create_placeholder(name))
 
+        self.notifications_enabled = True
+        self.notification_overlay = None
+        self.minimized_notifications = []
+        self.minimized_stack = QWidget(central_widget)
+        self.minimized_stack.setFixedWidth(240)
+        self.minimized_stack_layout = QVBoxLayout(self.minimized_stack)
+        self.minimized_stack_layout.setContentsMargins(0, 0, 0, 0)
+        self.minimized_stack_layout.setSpacing(0)
+        self.minimized_stack.hide()
+        self.notification_server = QLocalServer(self)
+        self.notification_buffers = {}
+        self.notification_server.newConnection.connect(
+            self.accept_notification_connections
+        )
         self.show_page("Admin")
+
+    def start_notification_server(self):
+        if not self.notification_server.listen(NOTIFICATION_SERVER_NAME):
+            raise RuntimeError(
+                "Could not listen for notification test commands: "
+                f"{self.notification_server.errorString()}"
+            )
+
+    def accept_notification_connections(self):
+        while self.notification_server.hasPendingConnections():
+            socket = self.notification_server.nextPendingConnection()
+            self.notification_buffers[socket] = bytearray()
+            socket.readyRead.connect(
+                lambda connection=socket:
+                self.receive_notification(connection)
+            )
+            socket.disconnected.connect(
+                lambda connection=socket:
+                self.notification_buffers.pop(connection, None)
+            )
+            socket.disconnected.connect(socket.deleteLater)
+
+    def receive_notification(self, socket):
+        buffer = self.notification_buffers.get(socket)
+        if buffer is None:
+            return
+
+        buffer.extend(bytes(socket.readAll()))
+        if b"\n" not in buffer:
+            return
+
+        message, _, _ = buffer.partition(b"\n")
+        try:
+            values = json.loads(message.decode("utf-8"))
+            notification = ContactNotification(**values)
+        except (UnicodeDecodeError, json.JSONDecodeError, TypeError) as error:
+            socket.write(f"error: {error}\n".encode("utf-8"))
+            socket.flush()
+            return
+
+        socket.write(b"ok\n")
+        socket.flush()
+        self.show_contact_notification(notification)
 
     def create_sidebar(self):
         sidebar = QFrame()
@@ -502,6 +582,9 @@ class ReConnectWindow(QMainWindow):
             button.setFont(nav_font)
 
         super().resizeEvent(event)
+        if self.notification_overlay is not None:
+            self.notification_overlay.setGeometry(self.centralWidget().rect())
+        self.position_minimized_stack()
 
     def create_placeholder(self, name):
         page = QWidget()
@@ -523,13 +606,199 @@ class ReConnectWindow(QMainWindow):
         title = "Administration" if name == "Admin" else name
         self.setWindowTitle(f"ReConnect — {title}")
 
+    def show_contact_notification(
+        self,
+        notification: ContactNotification,
+    ):
+        if not self.notifications_enabled:
+            return
+
+        if self.notification_overlay is not None or self.minimized_notifications:
+            self.add_minimized_notification(notification)
+            return
+
+        self.display_contact_notification(notification)
+
+    def display_contact_notification(self, notification):
+        popup = ContactDetectedPopup(notification, self.centralWidget())
+        popup.setGeometry(self.centralWidget().rect())
+        popup.contact_requested.connect(self.open_contact)
+        popup.do_not_disturb_requested.connect(self.disable_notifications)
+        popup.dismissed.connect(
+            lambda current=popup: self.dismiss_contact_notification(current)
+        )
+        popup.minimize_requested.connect(
+            lambda current=popup: self.minimize_contact_notification(current)
+        )
+        self.notification_overlay = popup
+        self.minimized_stack.hide()
+        self.content_blur_effect.setEnabled(True)
+        popup.show()
+        popup.raise_()
+
+    def dismiss_contact_notification(self, popup):
+        if self.notification_overlay is not popup:
+            return
+        self.finish_contact_notification(popup)
+        self.update_minimized_stack()
+
+    def minimize_contact_notification(self, popup):
+        if self.notification_overlay is not popup:
+            return
+        notification = popup.notification
+        self.finish_contact_notification(popup)
+        self.add_minimized_notification(notification)
+
+    def finish_contact_notification(self, popup):
+        self.content_blur_effect.setEnabled(False)
+        self.notification_overlay = None
+        popup.deleteLater()
+
+    def add_minimized_notification(self, notification):
+        chip = MinimizedContactNotification(notification, self.minimized_stack)
+        chip.restore_requested.connect(
+            lambda current=chip: self.restore_minimized_notification(current)
+        )
+        self.minimized_notifications.append((notification, chip))
+        self.minimized_stack_layout.addWidget(chip)
+        self.update_minimized_stack()
+
+    def restore_minimized_notification(self, chip):
+        notification = next(
+            (
+                item
+                for item in self.minimized_notifications
+                if item[1] is chip
+            ),
+            None,
+        )
+        if notification is None:
+            return
+
+        self.minimized_notifications.remove(notification)
+        self.minimized_stack_layout.removeWidget(chip)
+        chip.deleteLater()
+        self.update_minimized_stack()
+        if self.notification_overlay is None:
+            self.display_contact_notification(notification[0])
+
+    def update_minimized_stack(self):
+        has_minimized = bool(self.minimized_notifications)
+        self.minimized_stack.setVisible(
+            has_minimized and self.notification_overlay is None
+        )
+        self.position_minimized_stack()
+
+    def position_minimized_stack(self):
+        if not hasattr(self, "minimized_stack"):
+            return
+        central = self.centralWidget()
+        margins = self.minimized_stack_layout.contentsMargins()
+        height = (
+            margins.top()
+            + margins.bottom()
+            + sum(
+                chip.height()
+                for _, chip in self.minimized_notifications
+            )
+            + self.minimized_stack_layout.spacing()
+            * max(0, len(self.minimized_notifications) - 1)
+        )
+        self.minimized_stack.setGeometry(
+            central.width() - self.minimized_stack.width() - 16,
+            16,
+            self.minimized_stack.width(),
+            height,
+        )
+        if self.minimized_stack.isVisible():
+            self.minimized_stack.raise_()
+
+    def open_contact(self, contact_id: str):
+        self.show_page("Contacts")
+        contacts_page = self.pages["Contacts"]
+        open_contact = getattr(contacts_page, "open_contact", None)
+        if callable(open_contact):
+            open_contact(contact_id)
+        else:
+            self.pending_contact_id = contact_id
+
+    def disable_notifications(self):
+        self.notifications_enabled = False
+
+
+def send_notification_to_running_app(notification: ContactNotification):
+    socket = QLocalSocket()
+    socket.connectToServer(NOTIFICATION_SERVER_NAME)
+    if not socket.waitForConnected(1000):
+        raise RuntimeError(
+            "The ReConnect dashboard is not open, or is not accepting "
+            f"notification commands: {socket.errorString()}"
+        )
+
+    message = json.dumps(notification.__dict__).encode("utf-8") + b"\n"
+    if socket.write(message) != len(message):
+        raise RuntimeError(f"Could not send notification: {socket.errorString()}")
+    if not socket.waitForBytesWritten(1000):
+        raise RuntimeError(f"Could not send notification: {socket.errorString()}")
+    if not socket.waitForReadyRead(1000):
+        raise RuntimeError(
+            f"The dashboard did not acknowledge the notification: "
+            f"{socket.errorString()}"
+        )
+
+    response = bytes(socket.readAll()).decode("utf-8").strip()
+    if response != "ok":
+        raise RuntimeError(f"The dashboard rejected the notification: {response}")
+    socket.disconnectFromServer()
+
 
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Run the ReConnect dashboard.")
+    parser.add_argument(
+        "--test-contact-notification",
+        action="store_true",
+        help="send a sample contact notification to the already-open dashboard",
+    )
+    parser.add_argument("--contact-id", default="sample-contact")
+    parser.add_argument("--contact-name", default="Sample-name")
+    parser.add_argument("--last-interaction", default="Unknown")
+    parser.add_argument(
+        "--last-topic",
+        default="Sample topic",
+    )
+    parser.add_argument(
+        "--direction",
+        default="Contact reached out to you",
+    )
+    args = parser.parse_args()
+
+    if args.test_contact_notification:
+        app = QCoreApplication(sys.argv)
+        notification = ContactNotification(
+            contact_id=args.contact_id,
+            contact_name=args.contact_name,
+            last_interaction=args.last_interaction,
+            last_topic=args.last_topic,
+            direction=args.direction,
+        )
+        try:
+            send_notification_to_running_app(notification)
+        except RuntimeError as error:
+            print(error, file=sys.stderr)
+            sys.exit(1)
+        print("Contact notification sent to the running dashboard.")
+        sys.exit(0)
+
     app = QApplication(sys.argv)
     app.setStyle("Fusion")
     app.setStyleSheet(STYLESHEET)
 
     window = ReConnectWindow()
+    try:
+        window.start_notification_server()
+    except RuntimeError as error:
+        print(error, file=sys.stderr)
+        sys.exit(1)
     window.show()
 
     sys.exit(app.exec())
